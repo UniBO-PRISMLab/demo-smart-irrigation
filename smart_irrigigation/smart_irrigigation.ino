@@ -35,12 +35,14 @@ enum VaseId { BASILICO = 0, ROSMARINO = 1 };
 // SOIL MOISTURE CALIBRATION
 // ============================================================================
 
-// Raw ADC values for dry and wet soil (calibrate these for your sensors)
-const int SOIL_DRY = 1023;    // Typical dry reading
-const int SOIL_WET = 400;     // Typical wet reading
+// Raw ADC values for dry and wet soil (calibrated from the measured dataset)
+const int SOIL_DRY = 830;     // Measured dry reading (approx. max)
+const int SOIL_WET = 415;     // Measured wet reading (approx. min)
 
 // Moisture percentage threshold below which irrigation is considered
-const int MOISTURE_THRESHOLD_PCT = 40;
+// A raw reading around 715 corresponds to roughly 72-78% dry in the measured dataset,
+// which translates to about 25% moisture in the firmware's wet->dry mapping.
+const int MOISTURE_THRESHOLD_PCT = 25;
 
 // ============================================================================
 // VASE CONFIGURATION
