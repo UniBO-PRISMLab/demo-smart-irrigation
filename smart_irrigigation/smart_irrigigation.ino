@@ -49,6 +49,8 @@ const int MOISTURE_THRESHOLD_PCT = 25;
 // ============================================================================
 
 // Per-vase min/max irrigation intervals (milliseconds)
+const bool IGNORE_VASE_IRRIGATION_INTERVALS_FOR_TEST = false;
+
 const unsigned long VASE_MIN_IRRIGATION_INTERVAL_MS[NUM_VASES] = {
   48UL * 60UL * 60UL * 1000UL,   // BASILICO: 48 hours
   72UL * 60UL * 60UL * 1000UL    // ROSMARINO: 72 hours
@@ -119,6 +121,13 @@ unsigned long lastLDRDebugTime = 0;
 unsigned long lastLDRSampleTime = 0;
 unsigned long dayStartTime = 0;
 
+void printIrrigationIntervalTestFlag() {
+  Serial.print("[CONFIG] Ignore vase irrigation min/max intervals: ");
+  Serial.println(
+    IGNORE_VASE_IRRIGATION_INTERVALS_FOR_TEST ? "ENABLED" : "DISABLED"
+  );
+}
+
 // ============================================================================
 // SETUP
 // ============================================================================
@@ -130,6 +139,7 @@ void setup() {
   initializeState();
   
   Serial.println("System initialized.");
+  printIrrigationIntervalTestFlag();
 }
 
 void initializePins() {
@@ -285,15 +295,19 @@ void updateLDRReading(unsigned long currentTime) {
 // ============================================================================
 
 void evaluateIrrigationNeed(int vase, unsigned long currentTime) {
+  bool intervalsIgnored = IGNORE_VASE_IRRIGATION_INTERVALS_FOR_TEST;
+
   // Check max interval: if too long since last irrigation, force watering
-  if (currentTime - lastIrrigationTime[vase] >= VASE_MAX_IRRIGATION_INTERVAL_MS[vase]) {
+  if (!intervalsIgnored &&
+      currentTime - lastIrrigationTime[vase] >= VASE_MAX_IRRIGATION_INTERVAL_MS[vase]) {
     triggerIrrigation(vase, currentTime);
     return;
   }
   
   // Check moisture threshold with min interval guard
   if (currentMoisturePct[vase] < MOISTURE_THRESHOLD_PCT) {
-    if (currentTime - lastIrrigationTime[vase] >= VASE_MIN_IRRIGATION_INTERVAL_MS[vase]) {
+    if (intervalsIgnored ||
+        currentTime - lastIrrigationTime[vase] >= VASE_MIN_IRRIGATION_INTERVAL_MS[vase]) {
       triggerIrrigation(vase, currentTime);
     }
   }
