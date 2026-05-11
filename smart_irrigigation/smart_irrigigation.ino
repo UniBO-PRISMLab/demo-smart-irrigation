@@ -26,7 +26,7 @@ const int PUMP_RELAY_PINS[NUM_VASES] = {2, 4};
 const int LDR_PIN = A2;
 
 // LED panel control pin (digital)
-const int LED_PANEL_PIN = 3;
+const int LED_PANEL_PIN = 7;
 
 // Vase identifiers
 enum VaseId { BASILICO = 0, ROSMARINO = 1 };
@@ -74,6 +74,7 @@ const int LDR_THRESHOLD_DARK = 200;      // Dark condition
 const int LDR_THRESHOLD_MID = 500;       // Mid-level light
 const int LDR_THRESHOLD_LIGHT = 800;     // Bright condition
 const unsigned long LDR_DEBUG_INTERVAL_MS = 60000;  // Print LDR status every 60s
+const unsigned long LIGHT_TRACKING_DAY_MS = 24UL * 60UL * 60UL * 1000UL;
 
 // Local time assumptions for daytime detection
 const int SYSTEM_START_HOUR = 9;          // Local hour when system was powered on
@@ -87,13 +88,12 @@ const int DAYTIME_END_HOUR = 20;          // European summer approximate day end
 const unsigned long MOISTURE_SAMPLE_INTERVAL_MS = 100;  // Sample every 100ms
 const unsigned long MOISTURE_AVERAGE_INTERVAL_MS = 10000; // Average every 10s
 const int MOISTURE_SAMPLE_COUNT = 100;   // Number of samples per average
-const unsigned long LOOP_CYCLE_TIME_MS = 1000;  // Approximate loop cycle time for state tracking
 
 // ============================================================================
 // STATE TRACKING - SOIL MOISTURE
 // ============================================================================
 
-unsigned long lastSampleTime = 0;
+unsigned long lastSampleTime[NUM_VASES];
 int moistureSamples[NUM_VASES][MOISTURE_SAMPLE_COUNT];
 int sampleIndex[NUM_VASES];
 int currentMoisturePct[NUM_VASES];
@@ -116,6 +116,7 @@ unsigned long totalDarkTimeToday = 0;      // Cumulative dark time (ms)
 unsigned long totalMidLightTimeToday = 0;  // Cumulative mid-light time (ms)
 unsigned long totalBrightTimeToday = 0;    // Cumulative bright time (ms)
 unsigned long lastLDRDebugTime = 0;
+unsigned long lastLDRSampleTime = 0;
 unsigned long dayStartTime = 0;
 
 // ============================================================================
@@ -150,12 +151,14 @@ void initializePins() {
 }
 
 void initializeState() {
-  lastSampleTime = millis();
-  dayStartTime = millis();
+  unsigned long currentTime = millis();
+  dayStartTime = currentTime;
+  lastLDRSampleTime = currentTime;
   
   // Initialize per-vase state
   for (int i = 0; i < NUM_VASES; i++) {
-    lastIrrigationTime[i] = millis();
+    lastSampleTime[i] = currentTime;
+    lastIrrigationTime[i] = currentTime;
     sampleIndex[i] = 0;
     currentMoisturePct[i] = 0;
     pumpIsActive[i] = false;
@@ -165,6 +168,13 @@ void initializeState() {
       moistureSamples[i][j] = 0;
     }
   }
+}
+
+void resetLightTrackingDay(unsigned long currentTime) {
+  totalDarkTimeToday = 0;
+  totalMidLightTimeToday = 0;
+  totalBrightTimeToday = 0;
+  dayStartTime = currentTime;
 }
 
 // ============================================================================
@@ -192,11 +202,11 @@ void loop() {
 // ============================================================================
 
 void updateSoilMoisture(int vase, unsigned long currentTime) {
-  if (currentTime - lastSampleTime < MOISTURE_SAMPLE_INTERVAL_MS) {
+  if (currentTime - lastSampleTime[vase] < MOISTURE_SAMPLE_INTERVAL_MS) {
     return;  // Not time to sample yet
   }
   
-  lastSampleTime = currentTime;
+  lastSampleTime[vase] = currentTime;
   
   int rawValue = analogRead(SOIL_MOISTURE_PINS[vase]);
   moistureSamples[vase][sampleIndex[vase]] = rawValue;
@@ -230,7 +240,13 @@ int rawToPercentage(int rawValue) {
   if (rawValue < SOIL_WET) rawValue = SOIL_WET;
   
   // Linear mapping: DRY -> 0%, WET -> 100%
-  int percent = 100 - ((rawValue - SOIL_WET) * 100) / (SOIL_DRY - SOIL_WET);
+  // Use long math on UNO (16-bit int) to avoid overflow in multiplication.
+  long range = (long)SOIL_DRY - SOIL_WET;
+  long offset = (long)rawValue - SOIL_WET;
+  int percent = 100 - (int)((offset * 100L) / range);
+  
+  if (percent < 0) return 0;
+  if (percent > 100) return 100;
   return percent;
 }
 
@@ -239,15 +255,22 @@ int rawToPercentage(int rawValue) {
 // ============================================================================
 
 void updateLDRReading(unsigned long currentTime) {
+  if (currentTime - dayStartTime >= LIGHT_TRACKING_DAY_MS) {
+    resetLightTrackingDay(currentTime);
+  }
+
+  unsigned long elapsedMs = currentTime - lastLDRSampleTime;
+  lastLDRSampleTime = currentTime;
+
   currentLDRValue = analogRead(LDR_PIN);
   
-  // Categorize and track cumulative time for each light condition
+  // Categorize and track cumulative real elapsed time for each light condition.
   if (currentLDRValue < LDR_THRESHOLD_DARK) {
-    totalDarkTimeToday += LOOP_CYCLE_TIME_MS;
+    totalDarkTimeToday += elapsedMs;
   } else if (currentLDRValue < LDR_THRESHOLD_MID) {
-    totalMidLightTimeToday += LOOP_CYCLE_TIME_MS;
+    totalMidLightTimeToday += elapsedMs;
   } else {
-    totalBrightTimeToday += LOOP_CYCLE_TIME_MS;
+    totalBrightTimeToday += elapsedMs;
   }
   
   // Print LDR status at configured interval
