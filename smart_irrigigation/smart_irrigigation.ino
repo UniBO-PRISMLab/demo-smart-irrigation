@@ -49,7 +49,7 @@ const int MOISTURE_THRESHOLD_PCT = 25;
 // ============================================================================
 
 // Per-vase min/max irrigation intervals (milliseconds)
-const bool IGNORE_VASE_IRRIGATION_INTERVALS_FOR_TEST = false;
+const bool IGNORE_VASE_IRRIGATION_INTERVALS_FOR_TEST = true;
 
 const unsigned long VASE_MIN_IRRIGATION_INTERVAL_MS[NUM_VASES] = {
   48UL * 60UL * 60UL * 1000UL,   // BASILICO: 48 hours
@@ -66,7 +66,7 @@ const unsigned long VASE_MAX_IRRIGATION_INTERVAL_MS[NUM_VASES] = {
 // ============================================================================
 
 // Duration pump stays on per irrigation event (milliseconds)
-const unsigned long PUMP_DURATION_MS = 1000;  // 1 second
+const unsigned long PUMP_DURATION_MS = 3000;  // 3 second
 
 // ============================================================================
 // LIGHT SENSOR THRESHOLDS
@@ -241,10 +241,12 @@ void resetLightTrackingDay(unsigned long currentTime) {
 void loop() {
   unsigned long currentTime = millis();
   
-  // Non-blocking sensor reads and decision logic for each vase
+  // Evaluate irrigation only when a new averaged moisture reading is ready.
   for (int vase = 0; vase < NUM_VASES; vase++) {
-    updateSoilMoisture(vase, currentTime);
-    evaluateIrrigationNeed(vase, currentTime);
+    bool hasNewMoistureReading = updateSoilMoisture(vase, currentTime);
+    if (hasNewMoistureReading) {
+      evaluateIrrigationNeed(vase, currentTime);
+    }
     updatePumpState(vase, currentTime);
   }
   
@@ -258,9 +260,9 @@ void loop() {
 // SENSOR READING - SOIL MOISTURE
 // ============================================================================
 
-void updateSoilMoisture(int vase, unsigned long currentTime) {
+bool updateSoilMoisture(int vase, unsigned long currentTime) {
   if (currentTime - lastSampleTime[vase] < MOISTURE_SAMPLE_INTERVAL_MS) {
-    return;  // Not time to sample yet
+    return false;  // Not time to sample yet
   }
   
   lastSampleTime[vase] = currentTime;
@@ -272,7 +274,10 @@ void updateSoilMoisture(int vase, unsigned long currentTime) {
   // When buffer is full, calculate average
   if (sampleIndex[vase] == 0) {
     currentMoisturePct[vase] = calculateAverageMoisture(vase);
+    return true;
   }
+
+  return false;
 }
 
 int calculateAverageMoisture(int vase) {
