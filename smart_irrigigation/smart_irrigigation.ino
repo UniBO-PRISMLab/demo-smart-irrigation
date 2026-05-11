@@ -107,6 +107,7 @@ int currentMoisturePct[NUM_VASES];
 unsigned long lastIrrigationTime[NUM_VASES];
 unsigned long pumpActivateTime[NUM_VASES];
 bool pumpIsActive[NUM_VASES];
+bool hasCompletedFirstIrrigation[NUM_VASES];
 
 // ============================================================================
 // STATE TRACKING - LIGHTING
@@ -126,6 +127,51 @@ void printIrrigationIntervalTestFlag() {
   Serial.println(
     IGNORE_VASE_IRRIGATION_INTERVALS_FOR_TEST ? "ENABLED" : "DISABLED"
   );
+}
+
+const char* getVaseName(int vase) {
+  const char* vaseNames[NUM_VASES] = {"BASILICO", "ROSMARINO"};
+  return vaseNames[vase];
+}
+
+bool shouldIgnoreIrrigationIntervals(int vase) {
+  return IGNORE_VASE_IRRIGATION_INTERVALS_FOR_TEST &&
+         !hasCompletedFirstIrrigation[vase];
+}
+
+void printIrrigationThresholdTriggered(
+  int vase,
+  const char* reason,
+  int moisturePct
+) {
+  Serial.print("[IRRIGATION] ");
+  Serial.print(getVaseName(vase));
+  Serial.print(" | Threshold triggered: ");
+  Serial.print(reason);
+  Serial.print(" | Moisture: ");
+  Serial.print(moisturePct);
+  Serial.println("%");
+}
+
+void printIrrigationBlockedByTime(
+  int vase,
+  unsigned long elapsedMs,
+  unsigned long minIntervalMs
+) {
+  Serial.print("[IRRIGATION] ");
+  Serial.print(getVaseName(vase));
+  Serial.print(" | Moisture threshold blocked by min interval | Elapsed: ");
+  Serial.print(elapsedMs);
+  Serial.print("ms | Required: ");
+  Serial.print(minIntervalMs);
+  Serial.println("ms");
+}
+
+void printPumpStateChange(int vase, const char* state) {
+  Serial.print("[PUMP] ");
+  Serial.print(getVaseName(vase));
+  Serial.print(" | ");
+  Serial.println(state);
 }
 
 // ============================================================================
@@ -172,6 +218,7 @@ void initializeState() {
     sampleIndex[i] = 0;
     currentMoisturePct[i] = 0;
     pumpIsActive[i] = false;
+    hasCompletedFirstIrrigation[i] = false;
     
     // Clear sample buffers
     for (int j = 0; j < MOISTURE_SAMPLE_COUNT; j++) {
@@ -295,28 +342,42 @@ void updateLDRReading(unsigned long currentTime) {
 // ============================================================================
 
 void evaluateIrrigationNeed(int vase, unsigned long currentTime) {
-  bool intervalsIgnored = IGNORE_VASE_IRRIGATION_INTERVALS_FOR_TEST;
+  unsigned long elapsedSinceIrrigation = currentTime - lastIrrigationTime[vase];
+  bool intervalsIgnored = shouldIgnoreIrrigationIntervals(vase);
 
   // Check max interval: if too long since last irrigation, force watering
   if (!intervalsIgnored &&
-      currentTime - lastIrrigationTime[vase] >= VASE_MAX_IRRIGATION_INTERVAL_MS[vase]) {
+      elapsedSinceIrrigation >= VASE_MAX_IRRIGATION_INTERVAL_MS[vase]) {
+    printIrrigationThresholdTriggered(vase, "MAX_INTERVAL", currentMoisturePct[vase]);
     triggerIrrigation(vase, currentTime);
     return;
   }
   
   // Check moisture threshold with min interval guard
-  if (currentMoisturePct[vase] < MOISTURE_THRESHOLD_PCT) {
-    if (intervalsIgnored ||
-        currentTime - lastIrrigationTime[vase] >= VASE_MIN_IRRIGATION_INTERVAL_MS[vase]) {
-      triggerIrrigation(vase, currentTime);
-    }
+  if (currentMoisturePct[vase] >= MOISTURE_THRESHOLD_PCT) {
+    return;
   }
+
+  if (intervalsIgnored ||
+      elapsedSinceIrrigation >= VASE_MIN_IRRIGATION_INTERVAL_MS[vase]) {
+    printIrrigationThresholdTriggered(vase, "LOW_MOISTURE", currentMoisturePct[vase]);
+    triggerIrrigation(vase, currentTime);
+    return;
+  }
+
+  printIrrigationBlockedByTime(
+    vase,
+    elapsedSinceIrrigation,
+    VASE_MIN_IRRIGATION_INTERVAL_MS[vase]
+  );
 }
 
 void triggerIrrigation(int vase, unsigned long currentTime) {
   lastIrrigationTime[vase] = currentTime;
   pumpActivateTime[vase] = currentTime;
   pumpIsActive[vase] = true;
+  hasCompletedFirstIrrigation[vase] = true;
+  printPumpStateChange(vase, "ON");
 }
 
 // ============================================================================
@@ -364,6 +425,7 @@ void updatePumpState(int vase, unsigned long currentTime) {
 void deactivatePump(int vase) {
   digitalWrite(PUMP_RELAY_PINS[vase], LOW);
   pumpIsActive[vase] = false;
+  printPumpStateChange(vase, "OFF");
 }
 
 // ============================================================================
@@ -410,9 +472,8 @@ bool isDaytime(unsigned long currentTime) {
 }
 
 void printMoistureReading(int vase, int rawValue, int percentValue) {
-  const char* vaseNames[NUM_VASES] = {"BASILICO", "ROSMARINO"};
   Serial.print("[MOISTURE] ");
-  Serial.print(vaseNames[vase]);
+  Serial.print(getVaseName(vase));
   Serial.print(" | Threshold: ");
   Serial.print(MOISTURE_THRESHOLD_PCT);
   Serial.print("% | Raw: ");
