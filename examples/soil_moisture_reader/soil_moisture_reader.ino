@@ -15,8 +15,8 @@ unsigned long lastPrintTime = 0;
 
 void setup() {
   Serial.begin(9600);
-  Serial.println("Soil Moisture Sensor Reader");
-  Serial.println("Reading every 1 second...\n");
+  Serial.println("Lettura del sensore di umidita' del terreno");
+  Serial.println("Legge ogni secondo...\n");
 }
 
 void loop() {
@@ -28,7 +28,7 @@ void loop() {
     
     int raw = analogRead(SOIL_MOISTURE_PIN);
     
-    Serial.print("MOSITURE (A0): ");
+    Serial.print("UMIDITA' (A0): ");
     Serial.println(raw);
   }
 }

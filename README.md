@@ -2,14 +2,14 @@
 
 ## Overview
 
-This Arduino UNO firmware controls two plant vases using soil moisture sensors and a global LDR light sensor. It manages irrigation with relay-driven water pumps and supplements lighting with an LED panel when daylight conditions are insufficient.
+This Arduino UNO firmware monitors two plant vases using soil moisture sensors and a global LDR light sensor. It reports low soil moisture with one LED per vase and supplements lighting with an LED panel when daylight conditions are insufficient.
 
 ## Hardware
 
 Required hardware:
 - Arduino UNO
 - 2 soil moisture sensors (one per vase)
-- 2 pump relays (one per vase)
+- 2 moisture alert LEDs (one per vase)
 - 1 LDR light sensor
 - 1 LED panel output relay or driver
 
@@ -21,22 +21,22 @@ In `smart_irrigigation.ino`, pin configuration is defined at the top of the file
 - Vase 0 (BASILICO): `A0`
 - Vase 1 (ROSMARINO): `A1`
 
-### Pump relays
-- Vase 0 pump relay: `2`
-- Vase 1 pump relay: `4`
+### Moisture alert LEDs
+- Vase 0 (BASILICO) LED: `2`
+- Vase 1 (ROSMARINO) LED: `4`
 
 ### Global light sensor
 - LDR pin: `A2`
 
 ### LED panel
-- LED panel control pin: `3`
+- LED panel control pin: `7`
 
 If you need to change the hardware pin assignment, update the arrays in the `PIN ASSIGNMENTS` section of `smart_irrigigation.ino`:
 ```cpp
 const int SOIL_MOISTURE_PINS[NUM_VASES] = {A0, A1};
-const int PUMP_RELAY_PINS[NUM_VASES] = {2, 4};
+const int VASE_LED_PINS[NUM_VASES] = {2, 4};
 const int LDR_PIN = A2;
-const int LED_PANEL_PIN = 3;
+const int LED_PANEL_PIN = 7;
 ```
 
 ## Configuration Constants
@@ -46,51 +46,23 @@ const int LED_PANEL_PIN = 3;
 The firmware uses raw ADC values to convert soil moisture readings into percentage.
 
 ```cpp
-const int SOIL_DRY = 1023; // Typical dry reading
-const int SOIL_WET = 400;  // Typical wet reading
+const int SOIL_DRY = 830; // Measured dry reading
+const int SOIL_WET = 415; // Measured wet reading
 ```
 
 Adjust these values to match your sensor calibration.
 
 ### Moisture threshold
 
-When the averaged moisture percentage falls below this threshold, irrigation becomes eligible:
+When the averaged moisture percentage falls below this threshold, the vase LED turns on:
 
 ```cpp
-const int MOISTURE_THRESHOLD_PCT = 40;
+const int MOISTURE_THRESHOLD_PCT = 25;
 ```
-
-### Per-vase irrigation intervals
-
-Each vase has its own minimum/maximum time between irrigation events:
-
-```cpp
-const unsigned long VASE_MIN_IRRIGATION_INTERVAL_MS[NUM_VASES] = {
-  48UL * 60UL * 60UL * 1000UL,   // BASILICO: 48 hours
-  72UL * 60UL * 60UL * 1000UL    // ROSMARINO: 72 hours
-};
-
-const unsigned long VASE_MAX_IRRIGATION_INTERVAL_MS[NUM_VASES] = {
-  96UL * 60UL * 60UL * 1000UL,   // BASILICO: 96 hours
-  240UL * 60UL * 60UL * 1000UL   // ROSMARINO: 240 hours
-};
-```
-
-These limits ensure the system does not irrigate a vase too often or let it go too long without water.
-
-### Pump duration
-
-Each irrigation event runs the pump for a fixed duration:
-
-```cpp
-const unsigned long PUMP_DURATION_MS = 1000; // 1 second
-```
-
-If you need more or less water per event, adjust this duration.
 
 ### Light sensor thresholds
 
-The LDR is categorized into three light levels:
+The LDR is categorized into four light levels:
 
 ```cpp
 const int LDR_THRESHOLD_DARK = 200;
@@ -130,14 +102,14 @@ const unsigned long LDR_DEBUG_INTERVAL_MS = 60000;
 
 ## Runtime Logic
 
-### Irrigation logic
+### Moisture LED logic
 
 For each vase:
 - Sample soil moisture continuously
 - Calculate average moisture as a percentage
-- If moisture is below `MOISTURE_THRESHOLD_PCT` and the vase has not been irrigated within its minimum interval, trigger irrigation
-- If the vase has not been irrigated within its maximum interval, force irrigation even if moisture is above threshold
-- Run the pump for `PUMP_DURATION_MS` and then stop it
+- Remove the highest and lowest raw sample from each 10 second sample window before averaging
+- Turn the vase LED on when moisture is below `MOISTURE_THRESHOLD_PCT`
+- Turn the vase LED off when moisture is at or above `MOISTURE_THRESHOLD_PCT`
 
 ### Lighting logic
 
@@ -164,7 +136,7 @@ arduino-cli core install arduino:avr
 
 ## Notes
 
-- Pumps default to OFF at startup for safety.
+- Vase LEDs default to OFF at startup.
 - The system is designed for a single Arduino UNO and avoids dynamic allocation.
 - The current implementation assumes a fixed daytime window based on startup hour; if the system is powered on at a different local hour, update `SYSTEM_START_HOUR` accordingly.
 - Keep calibration values up to date for your specific soil sensor and ambient light conditions.
@@ -172,9 +144,7 @@ arduino-cli core install arduino:avr
 ## Customization
 
 To adapt the system:
-- Change sensor or relay pin assignments in the `PIN ASSIGNMENTS` section
+- Change sensor or LED pin assignments in the `PIN ASSIGNMENTS` section
 - Adjust soil moisture calibration values and threshold
-- Update per-vase irrigation intervals for different plants
-- Change `PUMP_DURATION_MS` if the pump flow rate or delivery volume changes
 - Tune `LDR_THRESHOLD_*` values for your light sensor and environment
 
