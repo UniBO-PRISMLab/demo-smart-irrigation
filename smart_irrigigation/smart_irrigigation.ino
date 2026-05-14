@@ -1,11 +1,11 @@
 /*
  * Smart Irrigation and Plant Monitoring System
- * Arduino UNO - Two-vase moisture indicator
+ * Arduino UNO - Two-vase irrigation signal
  *
  * Architecture:
  * - Keeps sensor reading, decision logic, and actuator control separate
  * - Uses millis()-based timing, no blocking delay() calls
- * - No pump control: each vase LED reports low soil moisture
+ * - No pump control: each red LED reports irrigation need for one vase
  */
 
 // ============================================================================
@@ -17,13 +17,13 @@
 // Soil moisture sensor pins (analog)
 const int SOIL_MOISTURE_PINS[NUM_VASES] = {A0, A1};
 
-// Per-vase moisture alert LEDs (digital)
-const int VASE_LED_PINS[NUM_VASES] = {2, 4};
+// Per-vase red irrigation signal LEDs (digital)
+const int IRRIGATION_SIGNAL_LED_PINS[NUM_VASES] = {2, 4};
 
 // Light sensor (LDR) pin (analog)
 const int LDR_PIN = A2;
 
-// LED panel control pin (digital)
+// UV illumination LED control pin (digital)
 const int LED_PANEL_PIN = 7;
 
 const char* const VASE_NAMES[NUM_VASES] = {"BASILICO", "ROSMARINO"};
@@ -73,25 +73,16 @@ unsigned long lastMoistureSampleTime[NUM_VASES];
 int moistureSamples[NUM_VASES][MOISTURE_SAMPLE_COUNT];
 int moistureSampleIndex[NUM_VASES];
 int currentMoisturePct[NUM_VASES];
-bool vaseLedIsOn[NUM_VASES];
+bool irrigationSignalLedIsOn[NUM_VASES];
 
 // ============================================================================
 // STATE TRACKING - LIGHTING
 // ============================================================================
 
-enum LightLevel {
-  LIGHT_LEVEL_DARK,
-  LIGHT_LEVEL_MID,
-  LIGHT_LEVEL_GOOD,
-  LIGHT_LEVEL_BRIGHT
-};
-
 int currentLDRValue = 0;
-LightLevel currentLightLevel = LIGHT_LEVEL_DARK;
 bool ledPanelIsOn = false;
 unsigned long totalDarkTimeToday = 0;
 unsigned long totalMidLightTimeToday = 0;
-unsigned long totalGoodLightTimeToday = 0;
 unsigned long totalBrightTimeToday = 0;
 unsigned long lastLDRDebugTime = 0;
 unsigned long lastLDRSampleTime = 0;
@@ -108,13 +99,13 @@ void setup() {
   initializeState();
 
   Serial.println(F("Sistema inizializzato."));
-  Serial.println(F("[CONFIG] Bassa umidita' segnalata dai LED dei vasi."));
+  Serial.println(F("[CONFIG] Richiesta irrigazione segnalata dai LED rossi."));
 }
 
 void initializePins() {
   for (int vase = 0; vase < NUM_VASES; vase++) {
-    pinMode(VASE_LED_PINS[vase], OUTPUT);
-    digitalWrite(VASE_LED_PINS[vase], LOW);
+    pinMode(IRRIGATION_SIGNAL_LED_PINS[vase], OUTPUT);
+    digitalWrite(IRRIGATION_SIGNAL_LED_PINS[vase], LOW);
     pinMode(SOIL_MOISTURE_PINS[vase], INPUT);
   }
 
@@ -137,7 +128,7 @@ void initializeVaseState(int vase, unsigned long currentTime) {
   lastMoistureSampleTime[vase] = currentTime;
   moistureSampleIndex[vase] = 0;
   currentMoisturePct[vase] = 0;
-  vaseLedIsOn[vase] = false;
+  irrigationSignalLedIsOn[vase] = false;
 
   for (int sample = 0; sample < MOISTURE_SAMPLE_COUNT; sample++) {
     moistureSamples[vase][sample] = 0;
@@ -151,21 +142,21 @@ void initializeVaseState(int vase, unsigned long currentTime) {
 void loop() {
   unsigned long currentTime = millis();
 
-  updateVaseMoistureIndicators(currentTime);
+  updateIrrigationSignalLeds(currentTime);
   updateLDRReading(currentTime);
   evaluateLightingNeed(currentTime);
-  syncLedPanelPin();
+  updateLEDState();
 }
 
-void updateVaseMoistureIndicators(unsigned long currentTime) {
+void updateIrrigationSignalLeds(unsigned long currentTime) {
   for (int vase = 0; vase < NUM_VASES; vase++) {
     bool hasNewMoistureReading = updateSoilMoisture(vase, currentTime);
     if (!hasNewMoistureReading) {
       continue;
     }
 
-    evaluateMoistureLedNeed(vase);
-    syncVaseLedPin(vase);
+    evaluateIrrigationSignalNeed(vase);
+    syncIrrigationSignalLedPin(vase);
   }
 }
 
@@ -251,65 +242,47 @@ void updateLDRReading(unsigned long currentTime) {
   unsigned long elapsedMs = currentTime - lastLDRSampleTime;
   lastLDRSampleTime = currentTime;
   currentLDRValue = analogRead(LDR_PIN);
-  currentLightLevel = getLightLevel(currentLDRValue);
 
-  trackLightDuration(currentLightLevel, elapsedMs);
+  trackLightDuration(currentLDRValue, elapsedMs);
   printLDRStatusIfDue(currentTime);
 }
 
-LightLevel getLightLevel(int ldrValue) {
+void trackLightDuration(int ldrValue, unsigned long elapsedMs) {
   if (ldrValue < LDR_THRESHOLD_DARK) {
-    return LIGHT_LEVEL_DARK;
-  }
-  if (ldrValue < LDR_THRESHOLD_MID) {
-    return LIGHT_LEVEL_MID;
-  }
-  if (ldrValue < LDR_THRESHOLD_LIGHT) {
-    return LIGHT_LEVEL_GOOD;
-  }
-  return LIGHT_LEVEL_BRIGHT;
-}
-
-void trackLightDuration(LightLevel lightLevel, unsigned long elapsedMs) {
-  if (lightLevel == LIGHT_LEVEL_DARK) {
     totalDarkTimeToday += elapsedMs;
     return;
   }
-  if (lightLevel == LIGHT_LEVEL_MID) {
+  if (ldrValue < LDR_THRESHOLD_MID) {
     totalMidLightTimeToday += elapsedMs;
     return;
   }
-  if (lightLevel == LIGHT_LEVEL_GOOD) {
-    totalGoodLightTimeToday += elapsedMs;
-    return;
-  }
+
   totalBrightTimeToday += elapsedMs;
 }
 
 void resetLightTrackingDay(unsigned long currentTime) {
   totalDarkTimeToday = 0;
   totalMidLightTimeToday = 0;
-  totalGoodLightTimeToday = 0;
   totalBrightTimeToday = 0;
   dayStartTime = currentTime;
 }
 
 // ============================================================================
-// DECISION LOGIC - MOISTURE LEDS
+// DECISION LOGIC - IRRIGATION SIGNAL LEDS
 // ============================================================================
 
-void evaluateMoistureLedNeed(int vase) {
-  bool shouldTurnOn = isBelowMoistureThreshold(currentMoisturePct[vase]);
-  if (vaseLedIsOn[vase] == shouldTurnOn) {
+void evaluateIrrigationSignalNeed(int vase) {
+  bool shouldTurnOn = isIrrigationNeeded(vase);
+  if (irrigationSignalLedIsOn[vase] == shouldTurnOn) {
     return;
   }
 
-  vaseLedIsOn[vase] = shouldTurnOn;
-  printVaseLedState(vase, shouldTurnOn);
+  irrigationSignalLedIsOn[vase] = shouldTurnOn;
+  printIrrigationSignalLedState(vase, shouldTurnOn);
 }
 
-bool isBelowMoistureThreshold(int moisturePct) {
-  return moisturePct < MOISTURE_THRESHOLD_PCT;
+bool isIrrigationNeeded(int vase) {
+  return currentMoisturePct[vase] < MOISTURE_THRESHOLD_PCT;
 }
 
 // ============================================================================
@@ -319,33 +292,44 @@ bool isBelowMoistureThreshold(int moisturePct) {
 void evaluateLightingNeed(unsigned long currentTime) {
   unsigned long insufficientLightTime = totalDarkTimeToday + totalMidLightTimeToday;
   if (insufficientLightTime > INSUFFICIENT_LIGHT_LIMIT_MS) {
-    setLedPanelState(true);
+    turnLEDOn();
     return;
   }
 
-  bool darkDuringDay = isDaytime(currentTime) &&
-                       currentLightLevel == LIGHT_LEVEL_DARK;
-  setLedPanelState(darkDuringDay);
-}
-
-void setLedPanelState(bool shouldTurnOn) {
-  if (ledPanelIsOn == shouldTurnOn) {
+  if (isDaytime(currentTime) && currentLDRValue < LDR_THRESHOLD_DARK) {
+    turnLEDOn();
     return;
   }
 
-  ledPanelIsOn = shouldTurnOn;
-  printLedPanelState(shouldTurnOn);
+  turnLEDOff();
 }
 
 // ============================================================================
 // ACTUATOR CONTROL - LEDS
 // ============================================================================
 
-void syncVaseLedPin(int vase) {
-  digitalWrite(VASE_LED_PINS[vase], vaseLedIsOn[vase] ? HIGH : LOW);
+void syncIrrigationSignalLedPin(int vase) {
+  digitalWrite(
+    IRRIGATION_SIGNAL_LED_PINS[vase],
+    irrigationSignalLedIsOn[vase] ? HIGH : LOW
+  );
 }
 
-void syncLedPanelPin() {
+void turnLEDOn() {
+  if (!ledPanelIsOn) {
+    digitalWrite(LED_PANEL_PIN, HIGH);
+    ledPanelIsOn = true;
+  }
+}
+
+void turnLEDOff() {
+  if (ledPanelIsOn) {
+    digitalWrite(LED_PANEL_PIN, LOW);
+    ledPanelIsOn = false;
+  }
+}
+
+void updateLEDState() {
   digitalWrite(LED_PANEL_PIN, ledPanelIsOn ? HIGH : LOW);
 }
 
@@ -371,17 +355,14 @@ const char* getVaseName(int vase) {
   return VASE_NAMES[vase];
 }
 
-const char* getLDRCategory(LightLevel lightLevel) {
-  if (lightLevel == LIGHT_LEVEL_DARK) {
+const char* getLDRCategory(int ldrValue) {
+  if (ldrValue < LDR_THRESHOLD_DARK) {
     return "BUIO";
   }
-  if (lightLevel == LIGHT_LEVEL_MID) {
+  if (ldrValue < LDR_THRESHOLD_MID) {
     return "LUCE-MEDIA";
   }
-  if (lightLevel == LIGHT_LEVEL_GOOD) {
-    return "LUCE";
-  }
-  return "LUCE-FORTE";
+  return "LUCE";
 }
 
 void printMoistureReading(int vase, int rawValue, int percentValue) {
@@ -396,19 +377,16 @@ void printMoistureReading(int vase, int rawValue, int percentValue) {
   Serial.println(F("%"));
 }
 
-void printVaseLedState(int vase, bool isOn) {
-  Serial.print(F("[LED_VASO] "));
+void printIrrigationSignalLedState(int vase, bool isOn) {
+  Serial.print(F("[LED_IRRIGAZIONE] "));
   Serial.print(getVaseName(vase));
   Serial.print(F(" | "));
   Serial.print(isOn ? F("ACCESO") : F("SPENTO"));
+  Serial.print(F(" | Richiesta irrigazione: "));
+  Serial.print(isOn ? F("SI") : F("NO"));
   Serial.print(F(" | Umidita': "));
   Serial.print(currentMoisturePct[vase]);
   Serial.println(F("%"));
-}
-
-void printLedPanelState(bool isOn) {
-  Serial.print(F("[PANNELLO_LUCE] "));
-  Serial.println(isOn ? F("ACCESO") : F("SPENTO"));
 }
 
 void printLDRStatusIfDue(unsigned long currentTime) {
@@ -424,14 +402,12 @@ void printLDRStatus() {
   Serial.print(F("[LDR] Valore: "));
   Serial.print(currentLDRValue);
   Serial.print(F(" | Categoria: "));
-  Serial.print(getLDRCategory(currentLightLevel));
+  Serial.print(getLDRCategory(currentLDRValue));
   Serial.print(F(" | Giorno - Buio: "));
   Serial.print(totalDarkTimeToday / 1000);
   Serial.print(F("s | Luce media: "));
   Serial.print(totalMidLightTimeToday / 1000);
   Serial.print(F("s | Luce: "));
-  Serial.print(totalGoodLightTimeToday / 1000);
-  Serial.print(F("s | Luce forte: "));
   Serial.print(totalBrightTimeToday / 1000);
   Serial.println(F("s"));
 }
