@@ -22,14 +22,14 @@ unsigned long lastPrintTime = 0;
 
 void setup() {
   Serial.begin(9600);
-  Serial.println("LDR Light Sensor Reader");
-  Serial.println("Reading every 1 second...\n");
-  Serial.println("Thresholds:");
-  Serial.print("  DARK: < ");
+  Serial.println("Lettore sensore luce LDR");
+  Serial.println("Lettura ogni secondo...\n");
+  Serial.println("Soglie:");
+  Serial.print("  BUIO: < ");
   Serial.println(LDR_THRESHOLD_DARK);
-  Serial.print("  MID-LIGHT: < ");
+  Serial.print("  LUCE-MEDIA: < ");
   Serial.println(LDR_THRESHOLD_MID);
-  Serial.print("  LIGHT: >= ");
+  Serial.print("  LUCE: >= ");
   Serial.println(LDR_THRESHOLD_MID);
   Serial.println();
 }
@@ -44,19 +44,19 @@ void loop() {
     int ldr_raw = analogRead(LDR_PIN);
     const char* category = getLDRCategory(ldr_raw);
     
-    Serial.print("LDR Value: ");
+    Serial.print("Valore LDR: ");
     Serial.print(ldr_raw);
-    Serial.print(" | Category: ");
+    Serial.print(" | Categoria: ");
     Serial.println(category);
   }
 }
 
 const char* getLDRCategory(int ldrValue) {
   if (ldrValue < LDR_THRESHOLD_DARK) {
-    return "DARK";
+    return "BUIO";
   } else if (ldrValue < LDR_THRESHOLD_MID) {
-    return "MID-LIGHT";
+    return "LUCE-MEDIA";
   } else {
-    return "LIGHT";
+    return "LUCE";
   }
 }
